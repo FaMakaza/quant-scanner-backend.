@@ -10,76 +10,104 @@ import os
 from datetime import datetime
 
 # ==========================================
-# 🧠 CORE QUANT ENGINE: MTF BIAS & ALIGNMENT
+# 🧠 QUANTITATIVE SYSTEMS ENGINE
 # ==========================================
-class QuantEngine:
+class QuantSystemsEngine:
     def __init__(self):
-        # Specific weights from your prompt
+        # Weights strictly from ARCHITECTURE section
         self.weights = {"W1": 0.4, "D1": 0.3, "H4": 0.2, "H1": 0.1}
+        self.symbols = ["EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X", "GC=F", "CL=F", "BTC-USD"]
+
+    def flatten_df(self, df):
+        """Fixes yfinance MultiIndex column issue"""
+        if df is None or df.empty: return None
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        return df
 
     def calculate_bias(self, df):
-        """Logic: HH/HL vs LH/LL + EMA(20) Filter"""
+        """
+        Calculates Bullish (+1), Bearish (-1), or Neutral (0)
+        Logic: Market Structure (Price vs Prev Candle) + EMA(20)
+        """
         try:
+            df = self.flatten_df(df)
             if df is None or len(df) < 22: return 0
-            # Flatten columns for yfinance MultiIndex
-            if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
             
             close = df['Close']
-            ema20 = close.ewm(span=20).mean()
+            ema20 = close.ewm(span=20, adjust=False).mean()
             
             curr_close = float(close.iloc[-1])
+            last_ema = float(ema20.iloc[-1])
             prev_high = float(df['High'].iloc[-2])
             prev_low = float(df['Low'].iloc[-2])
             
-            # Bias Encoding: +1 Bullish, -1 Bearish, 0 Neutral
-            if curr_close > ema20.iloc[-1] and curr_close > prev_high: return 1
-            if curr_close < ema20.iloc[-1] and curr_close < prev_low: return -1
+            # Bullish: Price > EMA and Price > Previous High
+            if curr_close > last_ema and curr_close > prev_high: return 1
+            # Bearish: Price < EMA and Price < Previous Low
+            if curr_close < last_ema and curr_close < prev_low: return -1
             return 0
         except: return 0
 
-    def get_overall_bias(self, tf_data):
-        """Formula: (W1*0.4) + (D1*0.3) + (H4*0.2) + (H1*0.1)"""
-        biases = {tf: self.calculate_bias(tf_data[tf]) for tf in self.weights.keys()}
+    def get_weighted_analysis(self, data_dict):
+        """
+        Formula: (W1 * 0.4) + (D1 * 0.3) + (H4 * 0.2) + (H1 * 0.1)
+        """
+        # 1. Calculate individual biases
+        biases = {tf: self.calculate_bias(data_dict[tf]) for tf in self.weights.keys()}
         
+        # 2. Calculate Weighted Score
         score = sum(biases[tf] * self.weights[tf] for tf in self.weights)
         
-        # Count Aligned Timeframes
-        direction = 1 if score >= 0.5 else -1 if score <= -0.5 else 0
-        alignment_score = sum(1 for tf in biases if biases[tf] == direction and direction != 0)
+        # 3. Determine Overall Status
+        status = "NEUTRAL"
+        if score >= 0.5: status = "BULLISH"
+        elif score <= -0.5: status = "BEARISH"
+        
+        # 4. Alignment Calculation (Count TFs that match overall status)
+        direction = 1 if status == "BULLISH" else -1 if status == "BEARISH" else 0
+        alignment_count = sum(1 for tf in biases if biases[tf] == direction) if direction != 0 else 0
         
         return {
             "score": round(score, 2),
-            "status": "BULLISH" if score >= 0.5 else "BEARISH" if score <= -0.5 else "NEUTRAL",
+            "status": status,
             "biases": biases,
-            "alignment": alignment_score # 4/4, 3/4, etc.
+            "alignment": alignment_count
         }
 
-    def check_m15_mss(self, m15_df, overall_status):
-        """M15 Market Structure Shift: Break & Close above/below Pivot"""
+    def check_m15_signal(self, m15_df, overall_status):
+        """
+        Signal Engine: M15 Market Structure Shift (MSS)
+        Trigger: Break & Close above/below 10-candle Pivot
+        """
         try:
-            if m15_df is None or len(m15_df) < 15: return "WAITING"
-            if isinstance(m15_df.columns, pd.MultiIndex): m15_df.columns = m15_df.columns.get_level_values(0)
+            m15_df = self.flatten_df(m15_df)
+            if m15_df is None or len(m15_df) < 15 or overall_status == "NEUTRAL":
+                return "WAITING"
             
-            # Pivot High/Low of last 10 candles
+            # Pivot High/Low of last 10 candles (excluding current)
             lookback = m15_df.iloc[-11:-1]
-            res = float(lookback['High'].max())
-            sup = float(lookback['Low'].min())
+            pivot_high = float(lookback['High'].max())
+            pivot_low = float(lookback['Low'].min())
             curr_close = float(m15_df['Close'].iloc[-1])
 
-            if overall_status == "BULLISH" and curr_close > res: return "BUY SIGNAL"
-            if overall_status == "BEARISH" and curr_close < sup: return "SELL SIGNAL"
+            if overall_status == "BULLISH" and curr_close > pivot_high:
+                return "BUY SIGNAL"
+            if overall_status == "BEARISH" and curr_close < pivot_low:
+                return "SELL SIGNAL"
+            
             return "WAITING FOR MSS"
         except: return "WAITING"
 
 # ==========================================
-# 🌐 API SERVER & REAL-TIME SCANNER
+# 🌐 API SERVER & BACKGROUND SCANNER
 # ==========================================
-engine = QuantEngine()
+engine = QuantSystemsEngine()
 MARKET_STATE = {}
-SYMBOLS = ["EURUSD=X", "GBPUSD=X", "USDJPY=X", "GC=F", "CL=F", "BTC-USD"]
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    print("\n[SYSTEM] Quantitative Engine Online. Initializing Scans...")
     task = asyncio.create_task(scanner_loop())
     yield
     task.cancel()
@@ -89,51 +117,65 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"])
 
 async def scanner_loop():
     while True:
-        for symbol in SYMBOLS:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] --- New Scan Cycle Starting ---")
+        for symbol in engine.symbols:
             try:
-                # Fetching 5 Timeframes
+                # Fetching All required timeframes
                 data = {
-                    "W1": yf.download(symbol, period="2y", interval="1wk", progress=False),
-                    "D1": yf.download(symbol, period="6mo", interval="1d", progress=False),
-                    "H4": yf.download(symbol, period="1mo", interval="1h", progress=False), # Proxy for H4
-                    "H1": yf.download(symbol, period="1wk", interval="1h", progress=False),
-                    "M15": yf.download(symbol, period="2d", interval="15m", progress=False)
+                    "W1": yf.download(symbol, period="2y", interval="1wk", progress=False, auto_adjust=True),
+                    "D1": yf.download(symbol, period="6mo", interval="1d", progress=False, auto_adjust=True),
+                    "H4": yf.download(symbol, period="1mo", interval="1h", progress=False, auto_adjust=True), # Using H1 as proxy for H4
+                    "H1": yf.download(symbol, period="1wk", interval="1h", progress=False, auto_adjust=True),
+                    "M15": yf.download(symbol, period="2d", interval="15m", progress=False, auto_adjust=True)
                 }
                 
-                analysis = engine.get_overall_bias(data)
+                analysis = engine.get_weighted_analysis(data)
                 
-                # Rule: Only watchlist if Weekly & Daily agree with overall bias
-                w1_bias = analysis['biases']['W1']
-                d1_bias = analysis['biases']['D1']
+                # --- CORE LOGIC: Watchlist Requirements ---
+                # 1. Weekly & Daily must agree with overall bias
+                # 2. At least 3 timeframes must align (3/4)
                 overall_dir = 1 if analysis['status'] == "BULLISH" else -1
-                
-                is_valid = (w1_bias == overall_dir and d1_bias == overall_dir and analysis['alignment'] >= 3)
+                w1_agrees = analysis['biases']['W1'] == overall_dir
+                d1_agrees = analysis['biases']['D1'] == overall_dir
+                alignment_ok = analysis['alignment'] >= 3
 
-                if is_valid:
-                    signal = engine.check_m15_mss(data['M15'], analysis['status'])
+                if analysis['status'] != "NEUTRAL" and w1_agrees and d1_agrees and alignment_ok:
+                    # Symbol is on watchlist -> Process M15 Signal
+                    signal = engine.check_m15_signal(data['M15'], analysis['status'])
+                    
+                    price = float(engine.flatten_df(data['M15'])['Close'].iloc[-1])
+                    
                     MARKET_STATE[symbol] = {
                         "symbol": symbol.replace("=X", ""),
-                        "price": round(float(data['M15']['Close'].iloc[-1]), 4),
+                        "price": round(price, 4),
                         "overall_score": analysis['score'],
                         "status": analysis['status'],
                         "alignment": f"{analysis['alignment']}/4",
                         "biases": analysis['biases'],
                         "signal": signal,
-                        "rank": abs(analysis['score']) * analysis['alignment']
+                        "rank": abs(analysis['score']) * (analysis['alignment'] / 4)
                     }
+                    print(f"✅ {symbol} added to watchlist (Rank: {MARKET_STATE[symbol]['rank']})")
                 else:
-                    # Remove from watchlist if alignment breaks
+                    # Remove if it no longer fits criteria
                     MARKET_STATE.pop(symbol, None)
-            except: pass
+                    
+            except Exception as e:
+                print(f"❌ Error Scanning {symbol}: {e}")
+        
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] --- Scan Complete. Watchlist Size: {len(MARKET_STATE)} ---")
         await asyncio.sleep(60)
 
 @app.get("/api/watchlist")
 async def get_watchlist():
-    # Sort by Rank (Score * Alignment)
-    sorted_list = sorted(MARKET_STATE.values(), key=lambda x: x['rank'], reverse=True)
-    return sorted_list
+    # Final Output Requirement: Rank instruments by alignment/score
+    sorted_watchlist = sorted(MARKET_STATE.values(), key=lambda x: x['rank'], reverse=True)
+    return sorted_watchlist
+
+@app.get("/")
+async def health():
+    return {"status": "Quant Engine Online", "active_pairs": len(MARKET_STATE)}
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
-
