@@ -20,48 +20,39 @@ class QuantEngine:
         # SYMBOL UNIVERSE
         # ===============================
         self.symbols = [
-            # -------- FX MAJORS --------
-            "EURUSD=X", "GBPUSD=X", "USDJPY=X", "USDCHF=X",
-            "USDCAD=X", "AUDUSD=X", "NZDUSD=X",
+            # FX Majors
+            "EURUSD=X", "GBPUSD=X", "USDJPY=X", "USDCHF=X", "USDCAD=X", "AUDUSD=X", "NZDUSD=X",
 
-            # -------- FX MINORS / CROSSES --------
-            "EURGBP=X", "EURJPY=X", "EURCHF=X", "EURCAD=X",
-            "EURAUD=X", "EURNZD=X",
-            "GBPJPY=X", "GBPCHF=X", "GBPCAD=X",
-            "GBPAUD=X", "GBPNZD=X",
+            # FX Minors / Crosses
+            "EURGBP=X", "EURJPY=X", "EURCHF=X", "EURCAD=X", "EURAUD=X", "EURNZD=X",
+            "GBPJPY=X", "GBPCHF=X", "GBPCAD=X", "GBPAUD=X", "GBPNZD=X",
             "AUDJPY=X", "AUDCAD=X", "AUDCHF=X", "AUDNZD=X",
             "NZDJPY=X", "NZDCAD=X", "NZDCHF=X",
             "CADJPY=X", "CADCHF=X", "CHFJPY=X",
 
-            # -------- METALS --------
-            "XAUUSD=X",
+            # Metals (use reliable futures feed, display as XAUUSD)
+            "GC=F",     # Gold futures → display as XAUUSD
 
-            # -------- ENERGY --------
-            "CL=F",      # USOIL
-            "NG=F",      # NATGAS
+            # Energy
+            "CL=F",     # USOIL
+            "NG=F",     # NATGAS
 
-            # -------- INDICES --------
-            "^GSPC",     # S&P 500
-            "^DJI",      # Dow Jones
-            "^IXIC",     # Nasdaq
-            "^RUT",      # Russell 2000
-            "^FTSE",     # FTSE 100
-            "^GDAXI",    # DAX
-            "^FCHI",     # CAC 40
-            "^N225",     # Nikkei 225
-            "^HSI",      # Hang Seng
+            # Indices
+            "^GSPC", "^DJI", "^IXIC", "^RUT", "^FTSE", "^GDAXI", "^FCHI", "^N225", "^HSI",
 
-            # -------- DOLLAR INDEX --------
-            "DX-Y.NYB",  # DXY
+            # Dollar Index
+            "DX-Y.NYB",
         ]
 
         # ===============================
-        # SYMBOL ALIASES (display + TradingView friendly)
+        # DISPLAY ALIASES
         # ===============================
         self.alias_map = {
             "CL=F": "USOIL",
             "NG=F": "NATGAS",
-            "XAUUSD=X": "XAUUSD",
+
+            # ✅ Gold: show as XAUUSD in the app
+            "GC=F": "XAUUSD",
 
             "^GSPC": "SPX",
             "^DJI": "DJI",
@@ -76,41 +67,6 @@ class QuantEngine:
             "DX-Y.NYB": "DXY",
         }
 
-        # ===============================
-        # DISPLAY SPREADS (BROKER-LIKE)
-        # ===============================
-        self.spread_map = {
-            # FX (pips)
-            "EURUSD": (0.7, "pips"),
-            "GBPUSD": (0.9, "pips"),
-            "USDJPY": (0.8, "pips"),
-            "USDCAD": (1.0, "pips"),
-            "AUDUSD": (0.9, "pips"),
-            "NZDUSD": (1.1, "pips"),
-
-            # Metals / Energy (points)
-            "XAUUSD": (20, "pts"),
-            "USOIL": (3, "pts"),
-            "NATGAS": (5, "pts"),
-
-            # Indices (points)
-            "SPX": (0.8, "pts"),
-            "DJI": (1.0, "pts"),
-            "NASDAQ": (1.2, "pts"),
-            "RUSSELL": (1.4, "pts"),
-            "DAX": (1.5, "pts"),
-            "FTSE": (1.0, "pts"),
-            "CAC": (1.2, "pts"),
-            "NIKKEI": (5.0, "pts"),
-            "HSI": (8.0, "pts"),
-
-            # Dollar Index
-            "DXY": (0.02, "pts"),
-        }
-
-    # ===============================
-    # HELPERS
-    # ===============================
     def _normalize_symbol(self, symbol: str) -> str:
         if symbol in self.alias_map:
             return self.alias_map[symbol]
@@ -132,8 +88,10 @@ class QuantEngine:
             if df is None or df.empty:
                 return 0
             close = df["Close"].dropna()
+            if close.empty:
+                return 0
             ema = close.ewm(span=20, adjust=False).mean()
-            return 1 if close.iloc[-1] > ema.iloc[-1] else -1
+            return 1 if float(close.iloc[-1]) > float(ema.iloc[-1]) else -1
         except Exception:
             return 0
 
@@ -143,47 +101,90 @@ class QuantEngine:
             close = h1["Close"].dropna()
             if len(close) < 25:
                 return 0.0
-            return (close.iloc[-1] - close.iloc[-25]) / close.iloc[-25] * 100
+            last = float(close.iloc[-1])
+            prev = float(close.iloc[-25])
+            if prev == 0:
+                return 0.0
+            return (last - prev) / prev * 100.0
         except Exception:
             return 0.0
 
     @staticmethod
     def _sparkline(h1: pd.DataFrame, points: int = 24) -> List[float]:
         try:
-            return [float(x) for x in h1["Close"].dropna().tail(points)]
+            close = h1["Close"].dropna().tail(points)
+            return [float(x) for x in close.values]
         except Exception:
             return []
 
     @staticmethod
-    def _atr_pct(df: pd.DataFrame, period: int = 14) -> float:
+    def _atr_pct(h1: pd.DataFrame, period: int = 14) -> float:
         try:
-            high, low, close = df["High"], df["Low"], df["Close"]
+            high, low, close = h1["High"].dropna(), h1["Low"].dropna(), h1["Close"].dropna()
+            if len(close) < period + 2:
+                return 0.0
+            prev_close = close.shift(1)
             tr = pd.concat(
-                [(high - low).abs(), (high - close.shift()).abs(), (low - close.shift()).abs()],
+                [(high - low).abs(), (high - prev_close).abs(), (low - prev_close).abs()],
                 axis=1,
             ).max(axis=1)
             atr = tr.rolling(period).mean().iloc[-1]
-            return float(atr / close.iloc[-1] * 100)
+            last = close.iloc[-1]
+            if pd.isna(atr) or pd.isna(last) or float(last) == 0:
+                return 0.0
+            return float(atr) / float(last) * 100.0
         except Exception:
             return 0.0
 
-    def _vol_tier(self, atr_pct: float) -> str:
-        if atr_pct < 0.2:
+    @staticmethod
+    def _vol_tier(atr_pct: float) -> str:
+        if atr_pct < 0.20:
             return "LOW"
-        if atr_pct < 0.5:
+        if atr_pct < 0.50:
             return "MED"
         return "HIGH"
 
-    def _spread(self, sym: str) -> Dict[str, Any]:
-        val, unit = self.spread_map.get(sym, (None, None))
-        return {"value": val, "unit": unit}
+    @staticmethod
+    def _h4_series(df_h4: pd.DataFrame, points: int = 120) -> List[float]:
+        try:
+            close = df_h4["Close"].dropna().tail(points)
+            return [float(x) for x in close.values]
+        except Exception:
+            return []
 
-    # ===============================
-    # ANALYSIS
-    # ===============================
+    @staticmethod
+    def _h4_levels(df_h4: pd.DataFrame) -> Dict[str, Optional[float]]:
+        out = {"swing_high": None, "swing_low": None, "key_level": None}
+        try:
+            if df_h4 is None or df_h4.empty or len(df_h4) < 10:
+                return out
+
+            df = df_h4.tail(180).copy()
+            highs = df["High"].values
+            lows = df["Low"].values
+
+            swing_highs: List[float] = []
+            swing_lows: List[float] = []
+
+            for i in range(1, len(df) - 1):
+                if highs[i] > highs[i - 1] and highs[i] > highs[i + 1]:
+                    swing_highs.append(float(highs[i]))
+                if lows[i] < lows[i - 1] and lows[i] < lows[i + 1]:
+                    swing_lows.append(float(lows[i]))
+
+            last_high = swing_highs[-1] if swing_highs else None
+            last_low = swing_lows[-1] if swing_lows else None
+
+            out["swing_high"] = last_high
+            out["swing_low"] = last_low
+            out["key_level"] = last_low if last_low is not None else last_high
+            return out
+        except Exception:
+            return out
+
     def analyze_sync(self, symbol: str) -> Optional[Dict[str, Any]]:
         try:
-            raw = yf.download(symbol, period="1y", interval="1h", progress=False, auto_adjust=True)
+            raw = yf.download(symbol, period="1y", interval="1h", progress=False, auto_adjust=True, threads=False)
             if raw is None or raw.empty:
                 return None
             raw = self._flat_cols(raw)
@@ -199,38 +200,50 @@ class QuantEngine:
             score = sum(biases[k] * self.weights[k] for k in self.weights)
 
             status = "BULLISH" if score >= 0.2 else "BEARISH" if score <= -0.2 else "NEUTRAL"
-            direction = 1 if status == "BULLISH" else -1
-            alignment = sum(1 for v in biases.values() if v == direction)
+            direction = 1 if status == "BULLISH" else -1 if status == "BEARISH" else 0
+            alignment = sum(1 for v in biases.values() if v == direction) if direction != 0 else 0
 
             price = float(raw["Close"].iloc[-1])
             change_24h = self._change_24h_pct(tf["H1"])
             spark = self._sparkline(tf["H1"])
-
             atr_pct = self._atr_pct(tf["H1"])
             vol_tier = self._vol_tier(atr_pct)
 
             risk_tier = "A+" if alignment == 4 else "A" if alignment == 3 else "B"
-            signal = status if alignment >= 3 else "WAITING"
+            signal = status if alignment >= 3 and status != "NEUTRAL" else "WAITING"
 
             tv_symbol = self._normalize_symbol(symbol)
 
+            h4 = self._flat_cols(tf["H4"])
+            h4_series = self._h4_series(h4, 120)
+            h4_levels = self._h4_levels(h4)
+
+            digits = 3 if tv_symbol.endswith("JPY") else 4
+            # Gold futures price usually has 2 decimals; but we keep 2–4 safe
+            if tv_symbol == "XAUUSD":
+                digits = 2
+
             return {
                 "symbol": tv_symbol,
-                "price": round(price, 4),
+                "price": round(price, digits),
                 "status": status,
                 "biases": biases,
                 "risk_tier": risk_tier,
                 "signal": signal,
                 "alignment_val": alignment,
-                "change_24h_pct": round(change_24h, 2),
-                "spread": self._spread(tv_symbol),
-                "atr_pct": round(atr_pct, 3),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+
+                "change_24h_pct": round(float(change_24h), 2),
+                "atr_pct": round(float(atr_pct), 3),
                 "volatility_tier": vol_tier,
                 "sparkline": spark,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+
+                "h4_series": h4_series,
+                "h4_levels": h4_levels,
             }
+
         except Exception as e:
-            print(symbol, e)
+            print(f"[analyze_sync] Error for {symbol}: {e}")
             traceback.print_exc()
             return None
 
@@ -239,19 +252,24 @@ class QuantEngine:
 
 
 engine = QuantEngine()
-MARKET_STATE = {}
-PROGRESS = {"current": 0, "total": len(engine.symbols)}
+MARKET_STATE: Dict[str, Any] = {}
+PROGRESS = {"current": 0, "total": len(engine.symbols), "updated_at": None}
 
 
 async def scanner_loop():
     while True:
         PROGRESS["current"] = 0
+        PROGRESS["total"] = len(engine.symbols)
+        PROGRESS["updated_at"] = datetime.now(timezone.utc).isoformat()
+
         for s in engine.symbols:
             res = await engine.analyze(s)
             if res:
                 MARKET_STATE[s] = res
             PROGRESS["current"] += 1
+            PROGRESS["updated_at"] = datetime.now(timezone.utc).isoformat()
             await asyncio.sleep(0.6)
+
         await asyncio.sleep(60)
 
 
@@ -268,7 +286,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 @app.get("/api/watchlist")
 async def watchlist():
-    data = sorted(MARKET_STATE.values(), key=lambda x: x["alignment_val"], reverse=True)
+    data = sorted(MARKET_STATE.values(), key=lambda x: x.get("alignment_val", 0), reverse=True)
     return {"data": data, "progress": PROGRESS}
 
 
@@ -279,8 +297,3 @@ async def health():
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
-
-
-
-
-
