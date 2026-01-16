@@ -24,7 +24,6 @@ def safe_float(x, default=0.0) -> float:
             return default
         if isinstance(x, (int, float)):
             return float(x)
-        # pandas series / scalar
         if hasattr(x, "iloc"):
             if len(x) == 0:
                 return default
@@ -34,7 +33,6 @@ def safe_float(x, default=0.0) -> float:
         return default
 
 def round_price(symbol: str, price: float) -> float:
-    # Round depending on typical instrument format
     s = symbol.upper()
     if s in ("XAUUSD", "XAGUSD"):
         return round(price, 2)
@@ -42,27 +40,13 @@ def round_price(symbol: str, price: float) -> float:
         return round(price, 3)
     if s in ("BTCUSD", "ETHUSD"):
         return round(price, 2)
-    # FX: JPY pairs often 3 decimals, others 5
     if s.endswith("JPY"):
         return round(price, 3)
     return round(price, 5)
 
-def pip_size_for(symbol: str) -> float:
-    s = symbol.upper()
-    if s.endswith("JPY"):
-        return 0.01
-    if len(s) == 6 and s.isalpha():  # forex pair like EURUSD
-        return 0.0001
-    return 0.01  # fallback
-
 def estimate_spread(symbol: str, price: float) -> Dict[str, Any]:
-    """
-    Cheap spread estimate (since yfinance doesn't provide broker spreads).
-    You can replace this with your broker feed later.
-    """
     s = symbol.upper()
-    if len(s) == 6 and s.isalpha():  # FX
-        # majors tighter, minors wider
+    if len(s) == 6 and s.isalpha():
         majors = {"EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD"}
         typical_pips = 0.8 if s in majors else 1.6
         return {"value": typical_pips, "unit": "pips"}
@@ -107,15 +91,6 @@ def categorize(symbol: str) -> str:
         return "CRYPTO"
     return "OTHER"
 
-def to_display_symbol(display: str) -> str:
-    # Normalize for frontend use
-    d = display.upper().replace("/", "").replace(" ", "")
-    if d == "BTC-USD":
-        return "BTCUSD"
-    if d == "ETH-USD":
-        return "ETHUSD"
-    return d
-
 
 # ---------------------------
 # Quant Engine
@@ -123,64 +98,79 @@ def to_display_symbol(display: str) -> str:
 
 class QuantEngine:
     def __init__(self):
-        # Weighting for higher timeframe bias score
         self.weights = {"W1": 0.4, "D1": 0.3, "H4": 0.2, "H1": 0.1}
 
-        # TradingView-like symbol names (display) -> yfinance tickers
-        # (You can add/remove as needed)
-        self.assets: List[Dict[str, str]] = [
+        # Display symbol -> primary ticker + optional fallbacks
+        self.assets: List[Dict[str, Any]] = [
             # FX Majors
-            {"symbol": "EURUSD", "ticker": "EURUSD=X"},
-            {"symbol": "GBPUSD", "ticker": "GBPUSD=X"},
-            {"symbol": "USDJPY", "ticker": "USDJPY=X"},
-            {"symbol": "AUDUSD", "ticker": "AUDUSD=X"},
-            {"symbol": "USDCAD", "ticker": "USDCAD=X"},
-            {"symbol": "USDCHF", "ticker": "USDCHF=X"},
-            {"symbol": "NZDUSD", "ticker": "NZDUSD=X"},
+            {"symbol": "EURUSD", "tickers": ["EURUSD=X"]},
+            {"symbol": "GBPUSD", "tickers": ["GBPUSD=X"]},
+            {"symbol": "USDJPY", "tickers": ["USDJPY=X"]},
+            {"symbol": "AUDUSD", "tickers": ["AUDUSD=X"]},
+            {"symbol": "USDCAD", "tickers": ["USDCAD=X"]},
+            {"symbol": "USDCHF", "tickers": ["USDCHF=X"]},
+            {"symbol": "NZDUSD", "tickers": ["NZDUSD=X"]},
 
-            # FX Minors (sample set)
-            {"symbol": "EURGBP", "ticker": "EURGBP=X"},
-            {"symbol": "EURJPY", "ticker": "EURJPY=X"},
-            {"symbol": "GBPJPY", "ticker": "GBPJPY=X"},
-            {"symbol": "EURAUD", "ticker": "EURAUD=X"},
-            {"symbol": "GBPAUD", "ticker": "GBPAUD=X"},
+            # FX Minors (sample)
+            {"symbol": "EURGBP", "tickers": ["EURGBP=X"]},
+            {"symbol": "EURJPY", "tickers": ["EURJPY=X"]},
+            {"symbol": "GBPJPY", "tickers": ["GBPJPY=X"]},
+            {"symbol": "EURAUD", "tickers": ["EURAUD=X"]},
+            {"symbol": "GBPAUD", "tickers": ["GBPAUD=X"]},
 
-            # Metals (spot-like)
-            {"symbol": "XAUUSD", "ticker": "XAUUSD=X"},
-            {"symbol": "XAGUSD", "ticker": "XAGUSD=X"},
+            # Metals: yfinance spot can be flaky on cloud; fall back to futures
+            {"symbol": "XAUUSD", "tickers": ["XAUUSD=X", "GC=F"]},
+            {"symbol": "XAGUSD", "tickers": ["XAGUSD=X", "SI=F"]},
 
-            # Energy (futures)
-            {"symbol": "USOIL", "ticker": "CL=F"},   # WTI crude
-            {"symbol": "NATGAS", "ticker": "NG=F"},  # Natural Gas
+            # Energy: keep your existing futures (reliable)
+            {"symbol": "USOIL", "tickers": ["CL=F"]},
+            {"symbol": "NATGAS", "tickers": ["NG=F"]},
 
-            # Dollar index
-            {"symbol": "DXY", "ticker": "DX-Y.NYB"},
+            # Dollar Index
+            {"symbol": "DXY", "tickers": ["DX-Y.NYB"]},
 
-            # Major indices
-            {"symbol": "SPX", "ticker": "^GSPC"},
-            {"symbol": "DJI", "ticker": "^DJI"},
-            {"symbol": "NASDAQ", "ticker": "^IXIC"},
-            {"symbol": "RUSSELL", "ticker": "^RUT"},
-            {"symbol": "FTSE", "ticker": "^FTSE"},
-            {"symbol": "DAX", "ticker": "^GDAXI"},
-            {"symbol": "CAC", "ticker": "^FCHI"},
-            {"symbol": "NIKKEI", "ticker": "^N225"},
-            {"symbol": "HSI", "ticker": "^HSI"},
+            # Indices
+            {"symbol": "SPX", "tickers": ["^GSPC"]},
+            {"symbol": "DJI", "tickers": ["^DJI"]},
+            {"symbol": "NASDAQ", "tickers": ["^IXIC"]},
+            {"symbol": "RUSSELL", "tickers": ["^RUT"]},
+            {"symbol": "FTSE", "tickers": ["^FTSE"]},
+            {"symbol": "DAX", "tickers": ["^GDAXI"]},
+            {"symbol": "CAC", "tickers": ["^FCHI"]},
+            {"symbol": "NIKKEI", "tickers": ["^N225"]},
+            {"symbol": "HSI", "tickers": ["^HSI"]},
 
-            # Crypto (optional)
-            {"symbol": "BTCUSD", "ticker": "BTC-USD"},
-            {"symbol": "ETHUSD", "ticker": "ETH-USD"},
+            # Crypto
+            {"symbol": "BTCUSD", "tickers": ["BTC-USD"]},
+            {"symbol": "ETHUSD", "tickers": ["ETH-USD"]},
         ]
 
+    def _download(self, ticker: str, period: str, interval: str) -> pd.DataFrame:
+        return yf.download(
+            ticker,
+            period=period,
+            interval=interval,
+            progress=False,
+            auto_adjust=True,
+            threads=False,
+        )
+
+    def download_with_fallbacks(self, tickers: List[str], period: str, interval: str) -> Tuple[Optional[str], pd.DataFrame]:
+        last_err = None
+        for t in tickers:
+            try:
+                df = self._download(t, period=period, interval=interval)
+                if df is not None and not df.empty:
+                    return t, df
+            except Exception as e:
+                last_err = e
+                continue
+        return None, pd.DataFrame()
+
     def calculate_bias(self, df: pd.DataFrame) -> int:
-        """
-        Bias: +1 above EMA20, -1 below EMA20, 0 neutral.
-        """
         try:
             if df is None or df.empty:
                 return 0
-
-            # yfinance sometimes returns MultiIndex
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
 
@@ -201,11 +191,6 @@ class QuantEngine:
             return 0
 
     def make_h4_series_and_levels(self, raw_h1: pd.DataFrame) -> Tuple[List[float], Dict[str, Optional[float]]]:
-        """
-        Build H4 close series and detect:
-          - swing_high, swing_low (simple pivot detection)
-          - key_level (nearest between last swings, fallback midpoint)
-        """
         if raw_h1 is None or raw_h1.empty:
             return [], {"swing_high": None, "swing_low": None, "key_level": None}
 
@@ -214,15 +199,12 @@ class QuantEngine:
             return [], {"swing_high": None, "swing_low": None, "key_level": None}
 
         close = h4["Close"].dropna()
-        # last N closes for chart
         N = 120
         series = [safe_float(x) for x in close.tail(N).tolist()]
 
-        # pivot detection on last M bars
         M = min(len(close), 180)
         c = close.tail(M).reset_index(drop=True)
 
-        # Simple swing: local maxima/minima with window
         w = 3
         swing_high = None
         swing_low = None
@@ -235,13 +217,11 @@ class QuantEngine:
             if v == safe_float(window.min()):
                 swing_low = v
 
-        # More stable fallback: last 40 bars high/low if pivots not found
         if swing_high is None:
             swing_high = safe_float(c.tail(40).max())
         if swing_low is None:
             swing_low = safe_float(c.tail(40).min())
 
-        # Key level: midpoint between swings (acts like equilibrium / key level)
         key_level = None
         if swing_high is not None and swing_low is not None:
             key_level = (swing_high + swing_low) / 2.0
@@ -262,24 +242,17 @@ class QuantEngine:
         price: float,
         levels: Dict[str, Optional[float]],
     ) -> str:
-        """
-        Human-readable suggested setup (used by frontend + alerts).
-        For A/A+ signals only.
-        """
         if status == "NEUTRAL" or alignment < 3:
             return "Waiting: need stronger multi-timeframe alignment."
 
         direction = "BUY" if status == "BULLISH" else "SELL"
-        rr = 2.0  # default
+        rr = 2.0
 
         sh = levels.get("swing_high")
         slw = levels.get("swing_low")
         key = levels.get("key_level")
 
-        # entry preference: key level if present
         entry = key if key is not None else price
-
-        # buffer ~0.15% (works across assets)
         buffer = max(price * 0.0015, 0.0005)
 
         if direction == "BUY":
@@ -290,11 +263,7 @@ class QuantEngine:
                 tp = sh + buffer
             return (
                 f"{risk_tier} {direction}: Entry near {round_price(symbol, entry)} | "
-                f"SL {round_price(symbol, sl)} (below H4 swing low) | "
-                f"TP {round_price(symbol, tp)} (~{rr:.1f}R) | "
-                f"Levels: SH {round_price(symbol, sh) if sh is not None else '--'} / "
-                f"Key {round_price(symbol, key) if key is not None else '--'} / "
-                f"SL {round_price(symbol, slw) if slw is not None else '--'}"
+                f"SL {round_price(symbol, sl)} | TP {round_price(symbol, tp)} (~{rr:.1f}R)"
             )
         else:
             sl = (sh + buffer) if sh is not None else (entry + max(price * 0.003, 0.001))
@@ -304,31 +273,15 @@ class QuantEngine:
                 tp = slw - buffer
             return (
                 f"{risk_tier} {direction}: Entry near {round_price(symbol, entry)} | "
-                f"SL {round_price(symbol, sl)} (above H4 swing high) | "
-                f"TP {round_price(symbol, tp)} (~{rr:.1f}R) | "
-                f"Levels: SH {round_price(symbol, sh) if sh is not None else '--'} / "
-                f"Key {round_price(symbol, key) if key is not None else '--'} / "
-                f"SL {round_price(symbol, slw) if slw is not None else '--'}"
+                f"SL {round_price(symbol, sl)} | TP {round_price(symbol, tp)} (~{rr:.1f}R)"
             )
 
-    def analyze(self, display_symbol: str, ticker: str) -> Optional[Dict[str, Any]]:
-        """
-        Returns the payload for the mobile watchlist.
-        """
+    def analyze(self, display_symbol: str, tickers: List[str]) -> Optional[Dict[str, Any]]:
         try:
-            # One efficient pull for H1 history
-            raw = yf.download(
-                ticker,
-                period="1y",
-                interval="1h",
-                progress=False,
-                auto_adjust=True,
-                threads=False,
-            )
+            used_ticker, raw = self.download_with_fallbacks(tickers, period="1y", interval="1h")
             if raw is None or raw.empty:
                 return None
 
-            # resample to MTF (use lowercase 'h' to avoid FutureWarning)
             tf_data = {
                 "W1": raw.resample("W").last(),
                 "D1": raw.resample("D").last(),
@@ -343,34 +296,29 @@ class QuantEngine:
             direction = 1 if status == "BULLISH" else -1 if status == "BEARISH" else 0
             alignment = sum(1 for v in biases.values() if v == direction) if direction != 0 else 0
 
-            # M15 price (entry timing)
-            m15_raw = yf.download(
-                ticker,
-                period="5d",
-                interval="15m",
-                progress=False,
-                auto_adjust=True,
-                threads=False,
-            )
+            # Price from M15 using same ticker we successfully used above
+            m15_raw = pd.DataFrame()
+            if used_ticker:
+                try:
+                    m15_raw = self._download(used_ticker, period="5d", interval="15m")
+                except Exception:
+                    m15_raw = pd.DataFrame()
+
             if m15_raw is None or m15_raw.empty or "Close" not in m15_raw.columns:
-                price = 0.0
+                price = safe_float(tf_data["H1"]["Close"].dropna().iloc[-1], default=0.0)
             else:
                 price = safe_float(m15_raw["Close"].dropna().iloc[-1], default=0.0)
 
             price = round_price(display_symbol, price)
 
-            # H4 series + levels from H1 resample
             h4_series, h4_levels = self.make_h4_series_and_levels(raw)
 
-            # tiers
             risk_tier = "A+" if alignment == 4 else "A" if alignment == 3 else "B"
             signal = status if alignment >= 3 else "WAITING"
 
-            # category + spread
             cat = categorize(display_symbol)
             spr = estimate_spread(display_symbol, float(price))
 
-            # setup text (for A/A+ signals)
             setup = self.build_setup_text(
                 symbol=display_symbol,
                 status=status,
@@ -383,21 +331,16 @@ class QuantEngine:
             return {
                 "symbol": display_symbol,
                 "category": cat,
-
                 "price": price,
                 "status": status,
                 "biases": biases,
-
                 "risk_tier": risk_tier,
                 "signal": signal,
                 "alignment_val": alignment,
-
                 "spread": spr,
                 "setup": setup,
-
                 "h4_series": h4_series,
                 "h4_levels": h4_levels,
-
                 "updated_at": utc_now_iso(),
             }
 
@@ -405,18 +348,10 @@ class QuantEngine:
             return None
 
 
-# ---------------------------
-# App state
-# ---------------------------
-
 engine = QuantEngine()
 
 MARKET_STATE: Dict[str, Dict[str, Any]] = {}
-PROGRESS: Dict[str, Any] = {
-    "current": 0,
-    "total": len(engine.assets),
-    "updated_at": None,
-}
+PROGRESS: Dict[str, Any] = {"current": 0, "total": len(engine.assets), "updated_at": None}
 
 
 @asynccontextmanager
@@ -444,21 +379,16 @@ async def scanner_loop():
 
         for a in engine.assets:
             display = a["symbol"]
-            ticker = a["ticker"]
+            tickers = a["tickers"]
 
-            # Run blocking yfinance in thread to keep event loop responsive
-            res = await asyncio.to_thread(engine.analyze, display, ticker)
-
+            res = await asyncio.to_thread(engine.analyze, display, tickers)
             if res:
                 MARKET_STATE[display] = res
 
             PROGRESS["current"] += 1
             PROGRESS["updated_at"] = utc_now_iso()
-
-            # gentle pacing vs rate limits
             await asyncio.sleep(0.8)
 
-        # rescan interval
         await asyncio.sleep(60)
 
 
@@ -483,3 +413,5 @@ async def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
+
