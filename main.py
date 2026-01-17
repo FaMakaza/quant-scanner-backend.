@@ -42,11 +42,13 @@ def round_price(symbol: str, price: float) -> float:
         return round(price, 2)
     if s.endswith("JPY"):
         return round(price, 3)
+    if s.isalpha() and len(s) <= 6:
+        return round(price, 2)
     return round(price, 5)
 
 def estimate_spread(symbol: str, price: float) -> Dict[str, Any]:
     s = symbol.upper()
-    if len(s) == 6 and s.isalpha():
+    if len(s) == 6 and s.isalpha():  # FX
         majors = {"EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD"}
         typical_pips = 0.8 if s in majors else 1.6
         return {"value": typical_pips, "unit": "pips"}
@@ -60,11 +62,32 @@ def estimate_spread(symbol: str, price: float) -> Dict[str, Any]:
         return {"value": 1.0, "unit": "pts"}
     if s in ("BTCUSD", "ETHUSD"):
         return {"value": max(price * 0.0004, 5.0), "unit": "pts"}
+    if s.isalpha() and len(s) <= 6:
+        return {"value": 0.02, "unit": "pts"}  # stock "typical"
     return {"value": None, "unit": None}
 
-def categorize(symbol: str) -> str:
-    s = symbol.upper()
 
+# ---------------------------
+# Categorization (merged)
+# ---------------------------
+
+STOCK_SYMBOLS = {
+    "AAPL","MSFT","NVDA","AMZN","GOOGL","GOOG","META","TSLA","BRK.B","BRK-B","AVGO","LLY","JPM","V","MA",
+    "UNH","XOM","WMT","COST","HD","PG","KO","PEP","ORCL","NFLX","ADBE","CRM","INTC","AMD","QCOM","T",
+    "TSM","NVO","ASML","TM","SONY","SAP","SHEL","AZN","BABA","TCEHY","NSRGY","LVMUY","RHHBY","SHOP",
+    "PDD","RIO","BP","UL","HSBC","IBN","INFY"
+}
+
+def normalize_symbol(sym: str) -> str:
+    s = sym.upper().strip()
+    s = s.replace("/", "")
+    s = s.replace(" ", "")
+    return s
+
+def categorize(symbol: str) -> str:
+    s = normalize_symbol(symbol)
+
+    # ✅ merged: majors + minors => CURRENCIES
     fx_majors = {"EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD"}
     fx_minors = {
         "EURGBP", "EURJPY", "EURAUD", "EURNZD", "EURCAD", "EURCHF",
@@ -74,22 +97,22 @@ def categorize(symbol: str) -> str:
         "CADJPY", "CADCHF",
         "CHFJPY",
     }
+    if s in fx_majors or s in fx_minors:
+        return "CURRENCIES"
 
-    if s in fx_majors:
-        return "FX_MAJORS"
-    if s in fx_minors:
-        return "FX_MINORS"
-    if s in ("XAUUSD", "XAGUSD"):
-        return "METALS"
-    if s in ("USOIL", "NATGAS"):
-        return "ENERGY"
+    # ✅ merged: metals + energy => COMMODITIES
+    if s in ("XAUUSD", "XAGUSD", "USOIL", "NATGAS"):
+        return "COMMODITIES"
+
     if s in ("SPX", "DJI", "NASDAQ", "RUSSELL", "FTSE", "DAX", "CAC", "NIKKEI", "HSI"):
         return "INDICES"
     if s == "DXY":
         return "DOLLAR"
     if s in ("BTCUSD", "ETHUSD"):
         return "CRYPTO"
-    return "OTHER"
+    if s in STOCK_SYMBOLS:
+        return "STOCKS"
+    return "STOCKS"
 
 
 # ---------------------------
@@ -100,9 +123,8 @@ class QuantEngine:
     def __init__(self):
         self.weights = {"W1": 0.4, "D1": 0.3, "H4": 0.2, "H1": 0.1}
 
-        # Display symbol -> primary ticker + optional fallbacks
         self.assets: List[Dict[str, Any]] = [
-            # FX Majors
+            # Currencies (majors + minors)
             {"symbol": "EURUSD", "tickers": ["EURUSD=X"]},
             {"symbol": "GBPUSD", "tickers": ["GBPUSD=X"]},
             {"symbol": "USDJPY", "tickers": ["USDJPY=X"]},
@@ -111,18 +133,15 @@ class QuantEngine:
             {"symbol": "USDCHF", "tickers": ["USDCHF=X"]},
             {"symbol": "NZDUSD", "tickers": ["NZDUSD=X"]},
 
-            # FX Minors (sample)
             {"symbol": "EURGBP", "tickers": ["EURGBP=X"]},
             {"symbol": "EURJPY", "tickers": ["EURJPY=X"]},
             {"symbol": "GBPJPY", "tickers": ["GBPJPY=X"]},
             {"symbol": "EURAUD", "tickers": ["EURAUD=X"]},
             {"symbol": "GBPAUD", "tickers": ["GBPAUD=X"]},
 
-            # Metals: yfinance spot can be flaky on cloud; fall back to futures
+            # Commodities (metals + energy)
             {"symbol": "XAUUSD", "tickers": ["XAUUSD=X", "GC=F"]},
             {"symbol": "XAGUSD", "tickers": ["XAGUSD=X", "SI=F"]},
-
-            # Energy: keep your existing futures (reliable)
             {"symbol": "USOIL", "tickers": ["CL=F"]},
             {"symbol": "NATGAS", "tickers": ["NG=F"]},
 
@@ -143,6 +162,51 @@ class QuantEngine:
             # Crypto
             {"symbol": "BTCUSD", "tickers": ["BTC-USD"]},
             {"symbol": "ETHUSD", "tickers": ["ETH-USD"]},
+
+            # Stocks (US + global ADRs)
+            {"symbol": "AAPL", "tickers": ["AAPL"]},
+            {"symbol": "MSFT", "tickers": ["MSFT"]},
+            {"symbol": "NVDA", "tickers": ["NVDA"]},
+            {"symbol": "AMZN", "tickers": ["AMZN"]},
+            {"symbol": "GOOGL", "tickers": ["GOOGL"]},
+            {"symbol": "META", "tickers": ["META"]},
+            {"symbol": "TSLA", "tickers": ["TSLA"]},
+            {"symbol": "AVGO", "tickers": ["AVGO"]},
+            {"symbol": "BRK.B", "tickers": ["BRK-B"]},
+            {"symbol": "LLY", "tickers": ["LLY"]},
+            {"symbol": "JPM", "tickers": ["JPM"]},
+            {"symbol": "V", "tickers": ["V"]},
+            {"symbol": "MA", "tickers": ["MA"]},
+            {"symbol": "UNH", "tickers": ["UNH"]},
+            {"symbol": "XOM", "tickers": ["XOM"]},
+            {"symbol": "WMT", "tickers": ["WMT"]},
+            {"symbol": "COST", "tickers": ["COST"]},
+            {"symbol": "HD", "tickers": ["HD"]},
+            {"symbol": "ORCL", "tickers": ["ORCL"]},
+            {"symbol": "NFLX", "tickers": ["NFLX"]},
+            {"symbol": "ADBE", "tickers": ["ADBE"]},
+            {"symbol": "CRM", "tickers": ["CRM"]},
+            {"symbol": "AMD", "tickers": ["AMD"]},
+            {"symbol": "QCOM", "tickers": ["QCOM"]},
+
+            {"symbol": "TSM", "tickers": ["TSM"]},
+            {"symbol": "NVO", "tickers": ["NVO"]},
+            {"symbol": "ASML", "tickers": ["ASML"]},
+            {"symbol": "TM", "tickers": ["TM"]},
+            {"symbol": "SONY", "tickers": ["SONY"]},
+            {"symbol": "SAP", "tickers": ["SAP"]},
+            {"symbol": "SHEL", "tickers": ["SHEL"]},
+            {"symbol": "AZN", "tickers": ["AZN"]},
+            {"symbol": "BABA", "tickers": ["BABA"]},
+            {"symbol": "TCEHY", "tickers": ["TCEHY"]},
+            {"symbol": "NSRGY", "tickers": ["NSRGY"]},
+            {"symbol": "LVMUY", "tickers": ["LVMUY"]},
+            {"symbol": "RHHBY", "tickers": ["RHHBY"]},
+            {"symbol": "SHOP", "tickers": ["SHOP"]},
+            {"symbol": "PDD", "tickers": ["PDD"]},
+            {"symbol": "HSBC", "tickers": ["HSBC"]},
+            {"symbol": "INFY", "tickers": ["INFY"]},
+            {"symbol": "IBN", "tickers": ["IBN"]},
         ]
 
     def _download(self, ticker: str, period: str, interval: str) -> pd.DataFrame:
@@ -156,14 +220,12 @@ class QuantEngine:
         )
 
     def download_with_fallbacks(self, tickers: List[str], period: str, interval: str) -> Tuple[Optional[str], pd.DataFrame]:
-        last_err = None
         for t in tickers:
             try:
                 df = self._download(t, period=period, interval=interval)
                 if df is not None and not df.empty:
                     return t, df
-            except Exception as e:
-                last_err = e
+            except Exception:
                 continue
         return None, pd.DataFrame()
 
@@ -253,28 +315,22 @@ class QuantEngine:
         key = levels.get("key_level")
 
         entry = key if key is not None else price
-        buffer = max(price * 0.0015, 0.0005)
+        buffer = max(price * 0.0015, 0.01)
 
         if direction == "BUY":
-            sl = (slw - buffer) if slw is not None else (entry - max(price * 0.003, 0.001))
+            sl = (slw - buffer) if slw is not None else (entry - max(price * 0.006, 0.05))
             risk = max(entry - sl, 1e-9)
             tp = entry + risk * rr
             if sh is not None and (sh + buffer) > tp:
                 tp = sh + buffer
-            return (
-                f"{risk_tier} {direction}: Entry near {round_price(symbol, entry)} | "
-                f"SL {round_price(symbol, sl)} | TP {round_price(symbol, tp)} (~{rr:.1f}R)"
-            )
+            return f"{risk_tier} {direction}: Entry {round_price(symbol, entry)} | SL {round_price(symbol, sl)} | TP {round_price(symbol, tp)} (~{rr:.1f}R)"
         else:
-            sl = (sh + buffer) if sh is not None else (entry + max(price * 0.003, 0.001))
+            sl = (sh + buffer) if sh is not None else (entry + max(price * 0.006, 0.05))
             risk = max(sl - entry, 1e-9)
             tp = entry - risk * rr
             if slw is not None and (slw - buffer) < tp:
                 tp = slw - buffer
-            return (
-                f"{risk_tier} {direction}: Entry near {round_price(symbol, entry)} | "
-                f"SL {round_price(symbol, sl)} | TP {round_price(symbol, tp)} (~{rr:.1f}R)"
-            )
+            return f"{risk_tier} {direction}: Entry {round_price(symbol, entry)} | SL {round_price(symbol, sl)} | TP {round_price(symbol, tp)} (~{rr:.1f}R)"
 
     def analyze(self, display_symbol: str, tickers: List[str]) -> Optional[Dict[str, Any]]:
         try:
@@ -296,18 +352,17 @@ class QuantEngine:
             direction = 1 if status == "BULLISH" else -1 if status == "BEARISH" else 0
             alignment = sum(1 for v in biases.values() if v == direction) if direction != 0 else 0
 
-            # Price from M15 using same ticker we successfully used above
-            m15_raw = pd.DataFrame()
+            price = 0.0
             if used_ticker:
                 try:
                     m15_raw = self._download(used_ticker, period="5d", interval="15m")
+                    if m15_raw is not None and not m15_raw.empty and "Close" in m15_raw.columns:
+                        price = safe_float(m15_raw["Close"].dropna().iloc[-1], default=0.0)
                 except Exception:
-                    m15_raw = pd.DataFrame()
+                    price = 0.0
 
-            if m15_raw is None or m15_raw.empty or "Close" not in m15_raw.columns:
-                price = safe_float(tf_data["H1"]["Close"].dropna().iloc[-1], default=0.0)
-            else:
-                price = safe_float(m15_raw["Close"].dropna().iloc[-1], default=0.0)
+            if price == 0.0 and "Close" in raw.columns:
+                price = safe_float(raw["Close"].dropna().iloc[-1], default=0.0)
 
             price = round_price(display_symbol, price)
 
@@ -347,6 +402,10 @@ class QuantEngine:
         except Exception:
             return None
 
+
+# ---------------------------
+# App state
+# ---------------------------
 
 engine = QuantEngine()
 
@@ -413,5 +472,7 @@ async def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
+
 
 
