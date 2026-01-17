@@ -63,7 +63,7 @@ def estimate_spread(symbol: str, price: float) -> Dict[str, Any]:
     if s in ("BTCUSD", "ETHUSD"):
         return {"value": max(price * 0.0004, 5.0), "unit": "pts"}
     if s.isalpha() and len(s) <= 6:
-        return {"value": 0.02, "unit": "pts"}  # stock "typical"
+        return {"value": 0.02, "unit": "pts"}
     return {"value": None, "unit": None}
 
 
@@ -79,15 +79,12 @@ STOCK_SYMBOLS = {
 }
 
 def normalize_symbol(sym: str) -> str:
-    s = sym.upper().strip()
-    s = s.replace("/", "")
-    s = s.replace(" ", "")
+    s = sym.upper().strip().replace("/", "").replace(" ", "")
     return s
 
 def categorize(symbol: str) -> str:
     s = normalize_symbol(symbol)
 
-    # ✅ merged: majors + minors => CURRENCIES
     fx_majors = {"EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD"}
     fx_minors = {
         "EURGBP", "EURJPY", "EURAUD", "EURNZD", "EURCAD", "EURCHF",
@@ -100,7 +97,6 @@ def categorize(symbol: str) -> str:
     if s in fx_majors or s in fx_minors:
         return "CURRENCIES"
 
-    # ✅ merged: metals + energy => COMMODITIES
     if s in ("XAUUSD", "XAGUSD", "USOIL", "NATGAS"):
         return "COMMODITIES"
 
@@ -124,7 +120,7 @@ class QuantEngine:
         self.weights = {"W1": 0.4, "D1": 0.3, "H4": 0.2, "H1": 0.1}
 
         self.assets: List[Dict[str, Any]] = [
-            # Currencies (majors + minors)
+            # Currencies
             {"symbol": "EURUSD", "tickers": ["EURUSD=X"]},
             {"symbol": "GBPUSD", "tickers": ["GBPUSD=X"]},
             {"symbol": "USDJPY", "tickers": ["USDJPY=X"]},
@@ -139,16 +135,14 @@ class QuantEngine:
             {"symbol": "EURAUD", "tickers": ["EURAUD=X"]},
             {"symbol": "GBPAUD", "tickers": ["GBPAUD=X"]},
 
-            # Commodities (metals + energy)
+            # Commodities
             {"symbol": "XAUUSD", "tickers": ["XAUUSD=X", "GC=F"]},
             {"symbol": "XAGUSD", "tickers": ["XAGUSD=X", "SI=F"]},
             {"symbol": "USOIL", "tickers": ["CL=F"]},
             {"symbol": "NATGAS", "tickers": ["NG=F"]},
 
-            # Dollar Index
+            # Dollar / Indices
             {"symbol": "DXY", "tickers": ["DX-Y.NYB"]},
-
-            # Indices
             {"symbol": "SPX", "tickers": ["^GSPC"]},
             {"symbol": "DJI", "tickers": ["^DJI"]},
             {"symbol": "NASDAQ", "tickers": ["^IXIC"]},
@@ -163,7 +157,7 @@ class QuantEngine:
             {"symbol": "BTCUSD", "tickers": ["BTC-USD"]},
             {"symbol": "ETHUSD", "tickers": ["ETH-USD"]},
 
-            # Stocks (US + global ADRs)
+            # Stocks
             {"symbol": "AAPL", "tickers": ["AAPL"]},
             {"symbol": "MSFT", "tickers": ["MSFT"]},
             {"symbol": "NVDA", "tickers": ["NVDA"]},
@@ -174,39 +168,6 @@ class QuantEngine:
             {"symbol": "AVGO", "tickers": ["AVGO"]},
             {"symbol": "BRK.B", "tickers": ["BRK-B"]},
             {"symbol": "LLY", "tickers": ["LLY"]},
-            {"symbol": "JPM", "tickers": ["JPM"]},
-            {"symbol": "V", "tickers": ["V"]},
-            {"symbol": "MA", "tickers": ["MA"]},
-            {"symbol": "UNH", "tickers": ["UNH"]},
-            {"symbol": "XOM", "tickers": ["XOM"]},
-            {"symbol": "WMT", "tickers": ["WMT"]},
-            {"symbol": "COST", "tickers": ["COST"]},
-            {"symbol": "HD", "tickers": ["HD"]},
-            {"symbol": "ORCL", "tickers": ["ORCL"]},
-            {"symbol": "NFLX", "tickers": ["NFLX"]},
-            {"symbol": "ADBE", "tickers": ["ADBE"]},
-            {"symbol": "CRM", "tickers": ["CRM"]},
-            {"symbol": "AMD", "tickers": ["AMD"]},
-            {"symbol": "QCOM", "tickers": ["QCOM"]},
-
-            {"symbol": "TSM", "tickers": ["TSM"]},
-            {"symbol": "NVO", "tickers": ["NVO"]},
-            {"symbol": "ASML", "tickers": ["ASML"]},
-            {"symbol": "TM", "tickers": ["TM"]},
-            {"symbol": "SONY", "tickers": ["SONY"]},
-            {"symbol": "SAP", "tickers": ["SAP"]},
-            {"symbol": "SHEL", "tickers": ["SHEL"]},
-            {"symbol": "AZN", "tickers": ["AZN"]},
-            {"symbol": "BABA", "tickers": ["BABA"]},
-            {"symbol": "TCEHY", "tickers": ["TCEHY"]},
-            {"symbol": "NSRGY", "tickers": ["NSRGY"]},
-            {"symbol": "LVMUY", "tickers": ["LVMUY"]},
-            {"symbol": "RHHBY", "tickers": ["RHHBY"]},
-            {"symbol": "SHOP", "tickers": ["SHOP"]},
-            {"symbol": "PDD", "tickers": ["PDD"]},
-            {"symbol": "HSBC", "tickers": ["HSBC"]},
-            {"symbol": "INFY", "tickers": ["INFY"]},
-            {"symbol": "IBN", "tickers": ["IBN"]},
         ]
 
     def _download(self, ticker: str, period: str, interval: str) -> pd.DataFrame:
@@ -261,11 +222,9 @@ class QuantEngine:
             return [], {"swing_high": None, "swing_low": None, "key_level": None}
 
         close = h4["Close"].dropna()
-        N = 120
-        series = [safe_float(x) for x in close.tail(N).tolist()]
+        series = [safe_float(x) for x in close.tail(120).tolist()]
 
-        M = min(len(close), 180)
-        c = close.tail(M).reset_index(drop=True)
+        c = close.tail(min(len(close), 180)).reset_index(drop=True)
 
         w = 3
         swing_high = None
@@ -288,14 +247,14 @@ class QuantEngine:
         if swing_high is not None and swing_low is not None:
             key_level = (swing_high + swing_low) / 2.0
 
-        levels = {
+        return series, {
             "swing_high": float(swing_high) if swing_high is not None else None,
             "swing_low": float(swing_low) if swing_low is not None else None,
             "key_level": float(key_level) if key_level is not None else None,
         }
-        return series, levels
 
-    def build_setup_text(
+    # ✅ A/A+ ONLY: trade plan
+    def build_trade_setup(
         self,
         symbol: str,
         status: str,
@@ -305,7 +264,7 @@ class QuantEngine:
         levels: Dict[str, Optional[float]],
     ) -> str:
         if status == "NEUTRAL" or alignment < 3:
-            return "Waiting: need stronger multi-timeframe alignment."
+            return ""
 
         direction = "BUY" if status == "BULLISH" else "SELL"
         rr = 2.0
@@ -324,13 +283,46 @@ class QuantEngine:
             if sh is not None and (sh + buffer) > tp:
                 tp = sh + buffer
             return f"{risk_tier} {direction}: Entry {round_price(symbol, entry)} | SL {round_price(symbol, sl)} | TP {round_price(symbol, tp)} (~{rr:.1f}R)"
-        else:
-            sl = (sh + buffer) if sh is not None else (entry + max(price * 0.006, 0.05))
-            risk = max(sl - entry, 1e-9)
-            tp = entry - risk * rr
-            if slw is not None and (slw - buffer) < tp:
-                tp = slw - buffer
-            return f"{risk_tier} {direction}: Entry {round_price(symbol, entry)} | SL {round_price(symbol, sl)} | TP {round_price(symbol, tp)} (~{rr:.1f}R)"
+
+        sl = (sh + buffer) if sh is not None else (entry + max(price * 0.006, 0.05))
+        risk = max(sl - entry, 1e-9)
+        tp = entry - risk * rr
+        if slw is not None and (slw - buffer) < tp:
+            tp = slw - buffer
+        return f"{risk_tier} {direction}: Entry {round_price(symbol, entry)} | SL {round_price(symbol, sl)} | TP {round_price(symbol, tp)} (~{rr:.1f}R)"
+
+    # ✅ B+ ONLY: FUTURE PROJECTION (no entry/SL/TP)
+    def build_projection(
+        self,
+        symbol: str,
+        status: str,
+        alignment: int,
+        price: float,
+        levels: Dict[str, Optional[float]],
+    ) -> str:
+        if status == "NEUTRAL" or alignment < 2:
+            return ""
+
+        sh = levels.get("swing_high")
+        slw = levels.get("swing_low")
+        key = levels.get("key_level")
+
+        if status == "BULLISH":
+            target = sh if sh is not None else (price * 1.01)
+            pullback = key if key is not None else price
+            return (
+                f"Projection ↑: bias bullish. Watch pullback to {round_price(symbol, pullback)} "
+                f"then continuation toward {round_price(symbol, target)}. "
+                f"Key levels: {round_price(symbol, slw) if slw else '--'} / {round_price(symbol, key) if key else '--'} / {round_price(symbol, sh) if sh else '--'}"
+            )
+
+        target = slw if slw is not None else (price * 0.99)
+        pullback = key if key is not None else price
+        return (
+            f"Projection ↓: bias bearish. Watch pullback to {round_price(symbol, pullback)} "
+            f"then continuation toward {round_price(symbol, target)}. "
+            f"Key levels: {round_price(symbol, slw) if slw else '--'} / {round_price(symbol, key) if key else '--'} / {round_price(symbol, sh) if sh else '--'}"
+        )
 
     def analyze(self, display_symbol: str, tickers: List[str]) -> Optional[Dict[str, Any]]:
         try:
@@ -374,10 +366,20 @@ class QuantEngine:
             cat = categorize(display_symbol)
             spr = estimate_spread(display_symbol, float(price))
 
-            setup = self.build_setup_text(
+            # ✅ Setup only for A/A+, otherwise empty
+            setup = self.build_trade_setup(
                 symbol=display_symbol,
                 status=status,
                 risk_tier=risk_tier,
+                alignment=alignment,
+                price=float(price),
+                levels=h4_levels,
+            )
+
+            # ✅ Projection for B+ (future projection text)
+            projection = self.build_projection(
+                symbol=display_symbol,
+                status=status,
                 alignment=alignment,
                 price=float(price),
                 levels=h4_levels,
@@ -393,7 +395,10 @@ class QuantEngine:
                 "signal": signal,
                 "alignment_val": alignment,
                 "spread": spr,
-                "setup": setup,
+
+                "setup": setup,              # A/A+ only (trade plan)
+                "projection": projection,    # B+ only (future projection)
+
                 "h4_series": h4_series,
                 "h4_levels": h4_levels,
                 "updated_at": utc_now_iso(),
@@ -472,6 +477,7 @@ async def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 
 
 
