@@ -122,11 +122,13 @@ class QuantEngine:
             {"symbol": "EURAUD", "tickers": ["EURAUD=X"]},
             {"symbol": "GBPAUD", "tickers": ["GBPAUD=X"]},
 
-            # ✅ Commodities (add robust fallbacks)
-            {"symbol": "XAUUSD", "tickers": ["XAUUSD=X", "GC=F"]},
-            {"symbol": "XAGUSD", "tickers": ["XAGUSD=X", "SI=F"]},
-            {"symbol": "USOIL",  "tickers": ["CL=F"]},
-            {"symbol": "NATGAS", "tickers": ["NG=F"]},
+           # Commodities (more reliable tickers)
+# Note: yfinance spot XAUUSD=X / XAGUSD=X is flaky; futures are reliable.
+{"symbol": "XAUUSD", "ticker": "GC=F"},   # Gold futures
+{"symbol": "XAGUSD", "ticker": "SI=F"},   # Silver futures
+{"symbol": "USOIL",  "ticker": "CL=F"},
+{"symbol": "NATGAS", "ticker": "NG=F"},
+
 
             # Dollar Index
             {"symbol": "DXY", "tickers": ["DX-Y.NYB"]},
@@ -524,6 +526,7 @@ async def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 
 
 
