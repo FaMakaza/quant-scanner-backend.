@@ -50,21 +50,35 @@ def round_price(symbol: str, price: float) -> float:
     return round(price, 5)
 
 def estimate_spread(symbol: str, price: float) -> Dict[str, Any]:
+    """
+    IMPORTANT: commodities must be checked BEFORE the generic '6 letters = FX' rule
+    because XAUUSD/XAGUSD/NATGAS are 6 letters.
+    """
     s = symbol.upper()
-    if len(s) == 6 and s.isalpha():
-        majors = {"EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD"}
-        typical_pips = 0.8 if s in majors else 1.6
-        return {"value": typical_pips, "unit": "pips"}
+
+    # ✅ Commodities first
     if s in ("XAUUSD", "XAGUSD"):
         return {"value": 0.25, "unit": "pts"}
     if s == "USOIL":
         return {"value": 0.03, "unit": "pts"}
     if s == "NATGAS":
         return {"value": 0.005, "unit": "pts"}
+
+    # Indices / DXY
     if s in ("SPX", "DJI", "NASDAQ", "RUSSELL", "FTSE", "DAX", "CAC", "NIKKEI", "HSI", "DXY"):
         return {"value": 1.0, "unit": "pts"}
+
+    # Crypto
     if s in ("BTCUSD", "ETHUSD"):
         return {"value": max(price * 0.0004, 5.0), "unit": "pts"}
+
+    # ✅ FX pairs after commodities
+    if len(s) == 6 and s.isalpha():
+        majors = {"EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD"}
+        typical_pips = 0.8 if s in majors else 1.6
+        return {"value": typical_pips, "unit": "pips"}
+
+    # Stocks fallback
     return {"value": 0.02, "unit": "pts"}
 
 
@@ -106,61 +120,73 @@ class QuantEngine:
     def __init__(self):
         self.weights = {"W1": 0.4, "D1": 0.3, "H4": 0.2, "H1": 0.1}
 
-        # ✅ ticker can be a string OR a list of fallbacks
-        self.assets: List[Dict[str, Any]] = [
+        self.assets: List[Dict[str, str]] = [
             # Currencies
-            {"symbol": "EURUSD", "tickers": ["EURUSD=X"]},
-            {"symbol": "GBPUSD", "tickers": ["GBPUSD=X"]},
-            {"symbol": "USDJPY", "tickers": ["USDJPY=X"]},
-            {"symbol": "AUDUSD", "tickers": ["AUDUSD=X"]},
-            {"symbol": "USDCAD", "tickers": ["USDCAD=X"]},
-            {"symbol": "USDCHF", "tickers": ["USDCHF=X"]},
-            {"symbol": "NZDUSD", "tickers": ["NZDUSD=X"]},
-            {"symbol": "EURGBP", "tickers": ["EURGBP=X"]},
-            {"symbol": "EURJPY", "tickers": ["EURJPY=X"]},
-            {"symbol": "GBPJPY", "tickers": ["GBPJPY=X"]},
-            {"symbol": "EURAUD", "tickers": ["EURAUD=X"]},
-            {"symbol": "GBPAUD", "tickers": ["GBPAUD=X"]},
+            {"symbol": "EURUSD", "ticker": "EURUSD=X"},
+            {"symbol": "GBPUSD", "ticker": "GBPUSD=X"},
+            {"symbol": "USDJPY", "ticker": "USDJPY=X"},
+            {"symbol": "AUDUSD", "ticker": "AUDUSD=X"},
+            {"symbol": "USDCAD", "ticker": "USDCAD=X"},
+            {"symbol": "USDCHF", "ticker": "USDCHF=X"},
+            {"symbol": "NZDUSD", "ticker": "NZDUSD=X"},
+            {"symbol": "EURGBP", "ticker": "EURGBP=X"},
+            {"symbol": "EURJPY", "ticker": "EURJPY=X"},
+            {"symbol": "GBPJPY", "ticker": "GBPJPY=X"},
+            {"symbol": "EURAUD", "ticker": "EURAUD=X"},
+            {"symbol": "GBPAUD", "ticker": "GBPAUD=X"},
 
-           # Commodities (more reliable tickers)
-# Note: yfinance spot XAUUSD=X / XAGUSD=X is flaky; futures are reliable.
-{"symbol": "XAUUSD", "ticker": "GC=F"},   # Gold futures
-{"symbol": "XAGUSD", "ticker": "SI=F"},   # Silver futures
-{"symbol": "USOIL",  "ticker": "CL=F"},
-{"symbol": "NATGAS", "ticker": "NG=F"},
-
+            # ✅ Commodities (reliable futures tickers)
+            {"symbol": "XAUUSD", "ticker": "GC=F"},   # Gold futures
+            {"symbol": "XAGUSD", "ticker": "SI=F"},   # Silver futures
+            {"symbol": "USOIL",  "ticker": "CL=F"},
+            {"symbol": "NATGAS", "ticker": "NG=F"},
 
             # Dollar Index
-            {"symbol": "DXY", "tickers": ["DX-Y.NYB"]},
+            {"symbol": "DXY", "ticker": "DX-Y.NYB"},
 
             # Indices
-            {"symbol": "SPX", "tickers": ["^GSPC"]},
-            {"symbol": "DJI", "tickers": ["^DJI"]},
-            {"symbol": "NASDAQ", "tickers": ["^IXIC"]},
-            {"symbol": "RUSSELL", "tickers": ["^RUT"]},
-            {"symbol": "FTSE", "tickers": ["^FTSE"]},
-            {"symbol": "DAX", "tickers": ["^GDAXI"]},
-            {"symbol": "CAC", "tickers": ["^FCHI"]},
-            {"symbol": "NIKKEI", "tickers": ["^N225"]},
-            {"symbol": "HSI", "tickers": ["^HSI"]},
+            {"symbol": "SPX", "ticker": "^GSPC"},
+            {"symbol": "DJI", "ticker": "^DJI"},
+            {"symbol": "NASDAQ", "ticker": "^IXIC"},
+            {"symbol": "RUSSELL", "ticker": "^RUT"},
+            {"symbol": "FTSE", "ticker": "^FTSE"},
+            {"symbol": "DAX", "ticker": "^GDAXI"},
+            {"symbol": "CAC", "ticker": "^FCHI"},
+            {"symbol": "NIKKEI", "ticker": "^N225"},
+            {"symbol": "HSI", "ticker": "^HSI"},
 
             # Crypto
-            {"symbol": "BTCUSD", "tickers": ["BTC-USD"]},
-            {"symbol": "ETHUSD", "tickers": ["ETH-USD"]},
+            {"symbol": "BTCUSD", "ticker": "BTC-USD"},
+            {"symbol": "ETHUSD", "ticker": "ETH-USD"},
         ]
 
     def category(self, symbol: str) -> str:
+        """
+        IMPORTANT: commodities must be checked BEFORE '6 letters = currencies'
+        because XAUUSD/XAGUSD/NATGAS are 6 letters.
+        """
         s = symbol.upper()
-        if len(s) == 6 and s.isalpha():
-            return "CURRENCIES"
+
+        # ✅ Commodities first
         if s in ("XAUUSD", "XAGUSD", "USOIL", "NATGAS"):
             return "COMMODITIES"
+
+        # Indices
         if s in ("SPX", "DJI", "NASDAQ", "RUSSELL", "FTSE", "DAX", "CAC", "NIKKEI", "HSI"):
             return "INDICES"
+
+        # Dollar index
         if s == "DXY":
             return "DOLLAR"
+
+        # Crypto
         if s in ("BTCUSD", "ETHUSD"):
             return "CRYPTO"
+
+        # ✅ FX after commodities
+        if len(s) == 6 and s.isalpha():
+            return "CURRENCIES"
+
         return "STOCKS"
 
     def calculate_bias(self, df: pd.DataFrame) -> int:
@@ -246,116 +272,99 @@ class QuantEngine:
 
         if direction == "BUY":
             return (
-                f"{risk_tier} Projection (BUY): Bias bullish. "
+                f"{risk_tier} Projection ({direction}): Bias bullish. "
                 f"Watch pullback into Key {key_txt} then continuation toward Swing High {sh_txt}. "
                 f"Invalidation below Swing Low {sl_txt}."
             )
         else:
             return (
-                f"{risk_tier} Projection (SELL): Bias bearish. "
+                f"{risk_tier} Projection ({direction}): Bias bearish. "
                 f"Watch retrace into Key {key_txt} then continuation toward Swing Low {sl_txt}. "
                 f"Invalidation above Swing High {sh_txt}."
             )
 
-    def analyze_one_ticker(self, display_symbol: str, ticker: str) -> Optional[Dict[str, Any]]:
-        """
-        Attempt analysis using ONE ticker. Returns None if yfinance returns empty.
-        """
-        raw = yf.download(
-            ticker,
-            period="1y",
-            interval="1h",
-            progress=False,
-            auto_adjust=True,
-            threads=False,
-        )
-        if raw is None or raw.empty:
+    def analyze(self, display_symbol: str, ticker: str) -> Optional[Dict[str, Any]]:
+        try:
+            raw = yf.download(
+                ticker,
+                period="1y",
+                interval="1h",
+                progress=False,
+                auto_adjust=True,
+                threads=False,
+            )
+            if raw is None or raw.empty:
+                return None
+
+            tf_data = {
+                "W1": raw.resample("W").last(),
+                "D1": raw.resample("D").last(),
+                "H4": raw.resample("4h").last(),
+                "H1": raw,
+            }
+
+            biases = {tf: self.calculate_bias(tf_data[tf]) for tf in self.weights.keys()}
+            score = sum(biases[tf] * self.weights[tf] for tf in self.weights)
+
+            status = "BULLISH" if score >= 0.2 else "BEARISH" if score <= -0.2 else "NEUTRAL"
+            direction = 1 if status == "BULLISH" else -1 if status == "BEARISH" else 0
+            alignment = sum(1 for v in biases.values() if v == direction) if direction != 0 else 0
+
+            m15_raw = yf.download(
+                ticker,
+                period="5d",
+                interval="15m",
+                progress=False,
+                auto_adjust=True,
+                threads=False,
+            )
+            if m15_raw is None or m15_raw.empty or "Close" not in m15_raw.columns:
+                price = 0.0
+            else:
+                price = safe_float(m15_raw["Close"].dropna().iloc[-1], default=0.0)
+
+            price = float(round_price(display_symbol, float(price)))
+
+            h4_series, h4_levels = self.make_h4_series_and_levels(raw)
+
+            risk_tier = "A+" if alignment == 4 else "A" if alignment == 3 else "B"
+            signal = status if alignment >= 3 else "WAITING"
+
+            cat = self.category(display_symbol)
+            spr = estimate_spread(display_symbol, float(price))
+
+            setup = self.build_setup_projection(
+                symbol=display_symbol,
+                status=status,
+                risk_tier=risk_tier,
+                alignment=alignment,
+                price=float(price),
+                levels=h4_levels,
+            )
+
+            return {
+                "symbol": display_symbol,
+                "category": cat,
+
+                "price": price,
+                "status": status,
+                "biases": biases,
+
+                "risk_tier": risk_tier,
+                "signal": signal,
+                "alignment_val": alignment,
+
+                "spread": spr,
+                "setup": setup,
+
+                "h4_series": h4_series,
+                "h4_levels": h4_levels,
+
+                "updated_at": utc_now_iso(),
+            }
+
+        except Exception:
             return None
-
-        tf_data = {
-            "W1": raw.resample("W").last(),
-            "D1": raw.resample("D").last(),
-            "H4": raw.resample("4h").last(),
-            "H1": raw,
-        }
-
-        biases = {tf: self.calculate_bias(tf_data[tf]) for tf in self.weights.keys()}
-        score = sum(biases[tf] * self.weights[tf] for tf in self.weights)
-
-        status = "BULLISH" if score >= 0.2 else "BEARISH" if score <= -0.2 else "NEUTRAL"
-        direction = 1 if status == "BULLISH" else -1 if status == "BEARISH" else 0
-        alignment = sum(1 for v in biases.values() if v == direction) if direction != 0 else 0
-
-        m15_raw = yf.download(
-            ticker,
-            period="5d",
-            interval="15m",
-            progress=False,
-            auto_adjust=True,
-            threads=False,
-        )
-        if m15_raw is None or m15_raw.empty or "Close" not in m15_raw.columns:
-            price = 0.0
-        else:
-            price = safe_float(m15_raw["Close"].dropna().iloc[-1], default=0.0)
-
-        price = float(round_price(display_symbol, float(price)))
-        h4_series, h4_levels = self.make_h4_series_and_levels(raw)
-
-        risk_tier = "A+" if alignment == 4 else "A" if alignment == 3 else "B"
-
-        # signal BUY/SELL/WAITING (not BULLISH/BEARISH)
-        if status == "NEUTRAL" or alignment < 3:
-            signal = "WAITING"
-        else:
-            signal = "BUY" if status == "BULLISH" else "SELL"
-
-        cat = self.category(display_symbol)
-        spr = estimate_spread(display_symbol, float(price))
-
-        setup = self.build_setup_projection(
-            symbol=display_symbol,
-            status=status,
-            risk_tier=risk_tier,
-            alignment=alignment,
-            price=float(price),
-            levels=h4_levels,
-        )
-
-        return {
-            "symbol": display_symbol,
-            "category": cat,
-
-            "price": price,
-            "status": status,
-            "biases": biases,
-
-            "risk_tier": risk_tier,
-            "signal": signal,
-            "alignment_val": alignment,
-
-            "spread": spr,
-            "setup": setup,
-
-            "h4_series": h4_series,
-            "h4_levels": h4_levels,
-
-            "updated_at": utc_now_iso(),
-        }
-
-    def analyze(self, display_symbol: str, tickers: List[str]) -> Optional[Dict[str, Any]]:
-        """
-        ✅ Try tickers in order until one works.
-        """
-        for t in tickers:
-            try:
-                res = self.analyze_one_ticker(display_symbol, t)
-                if res:
-                    res["source_ticker"] = t  # debug
-                    return res
-            except Exception:
-                continue
-        return None
 
 
 # ---------------------------
@@ -450,11 +459,9 @@ async def scanner_loop():
 
         for a in engine.assets:
             display = a["symbol"]
-            tickers = a.get("tickers") or []
-            if isinstance(tickers, str):
-                tickers = [tickers]
+            ticker = a["ticker"]
 
-            res = await asyncio.to_thread(engine.analyze, display, tickers)
+            res = await asyncio.to_thread(engine.analyze, display, ticker)
             if res:
                 MARKET_STATE[display] = res
 
@@ -526,14 +533,4 @@ async def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
-
-
-
-
-
-
-
-
-
-
 
